@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -30,6 +30,8 @@ import java.util.Map;
  */
 public class FormatState implements Serializable {
 
+    private static final long serialVersionUID = 1L;
+
     private int numOfSubTask;
 
     private Object state;
@@ -45,7 +47,7 @@ public class FormatState implements Serializable {
 
     private String jobId;
 
-    private int fileIndex;
+    private int fileIndex = -1;
 
     public FormatState() {
     }

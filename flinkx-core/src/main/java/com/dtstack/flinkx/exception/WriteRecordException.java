@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,8 +18,6 @@
 
 package com.dtstack.flinkx.exception;
 
-import org.apache.flink.types.Row;
-
 /**
  * The Exception describing errors when writing a record
  *
@@ -28,21 +26,21 @@ import org.apache.flink.types.Row;
  */
 public class WriteRecordException extends Exception {
 
-    private int colIndex = -1;
-    private Row row;
+    private final int colIndex;
+    private final Object rowData;
+
+    public WriteRecordException(String message, Throwable cause, int colIndex, Object rowData) {
+        super(message, cause);
+        this.colIndex = colIndex;
+        this.rowData = rowData;
+    }
 
     public int getColIndex() {
         return colIndex;
     }
 
-    public Row getRow() {
-        return row;
-    }
-
-    public WriteRecordException(String message, Throwable cause, int colIndex, Row row) {
-        super(message, cause);
-        this.colIndex = colIndex;
-        this.row = row;
+    public Object getRowData() {
+        return rowData;
     }
 
     public WriteRecordException(String message, Throwable cause) {
@@ -53,5 +51,4 @@ public class WriteRecordException extends Exception {
     public String toString() {
         return super.toString() + "\n" + getCause().toString();
     }
-
 }

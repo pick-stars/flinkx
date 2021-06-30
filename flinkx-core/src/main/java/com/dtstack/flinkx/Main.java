@@ -15,159 +15,500 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package com.dtstack.flinkx;
 
-import com.dtstack.flink.api.java.MyLocalStreamEnvironment;
-import com.dtstack.flinkx.classloader.ClassLoaderManager;
-import com.dtstack.flinkx.config.DataTransferConfig;
-import com.dtstack.flinkx.constants.ConfigConstrant;
-import com.dtstack.flinkx.options.OptionParser;
-import com.dtstack.flinkx.reader.DataReader;
-import com.dtstack.flinkx.reader.DataReaderFactory;
-import com.dtstack.flinkx.util.ResultPrintUtil;
-import com.dtstack.flinkx.writer.DataWriter;
-import com.dtstack.flinkx.writer.DataWriterFactory;
-import org.apache.commons.io.Charsets;
-import org.apache.commons.lang.StringUtils;
+
+import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.JobExecutionResult;
 import org.apache.flink.api.common.restartstrategy.RestartStrategies;
-import org.apache.flink.client.program.ContextEnvironment;
+import org.apache.flink.api.common.time.Time;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.configuration.Configuration;
+import org.apache.flink.configuration.GlobalConfiguration;
 import org.apache.flink.runtime.jobgraph.SavepointRestoreSettings;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.flink.streaming.api.CheckpointingMode;
+import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.environment.CheckpointConfig;
-import org.apache.flink.streaming.api.environment.StreamContextEnvironment;
+import org.apache.flink.streaming.api.datastream.DataStreamSink;
+import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.transformations.PartitionTransformation;
-import org.apache.flink.streaming.runtime.partitioner.DTRebalancePartitioner;
-import org.apache.flink.types.Row;
+import org.apache.flink.table.api.EnvironmentSettings;
+import org.apache.flink.table.api.StatementSet;
+import org.apache.flink.table.api.Table;
+import org.apache.flink.table.api.TableConfig;
+import org.apache.flink.table.api.TableResult;
+import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
+import org.apache.flink.table.api.bridge.java.internal.StreamTableEnvironmentImpl;
+import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.expressions.Expression;
+import org.apache.flink.table.expressions.ExpressionParser;
+import org.apache.flink.table.factories.FactoryUtil;
+import org.apache.flink.table.types.DataType;
+
+import com.dtstack.flinkx.conf.RestartConf;
+import com.dtstack.flinkx.conf.SpeedConf;
+import com.dtstack.flinkx.conf.SyncConf;
+import com.dtstack.flinkx.constants.ConfigConstant;
+import com.dtstack.flinkx.enums.ClusterMode;
+import com.dtstack.flinkx.enums.EJobType;
+import com.dtstack.flinkx.environment.MyLocalStreamEnvironment;
+import com.dtstack.flinkx.exec.ExecuteProcessHelper;
+import com.dtstack.flinkx.options.OptionParser;
+import com.dtstack.flinkx.options.Options;
+import com.dtstack.flinkx.sink.SinkFactory;
+import com.dtstack.flinkx.source.SourceFactory;
+import com.dtstack.flinkx.sql.parser.SqlParser;
+import com.dtstack.flinkx.util.DataSyncFactoryUtil;
+import com.dtstack.flinkx.util.ExceptionUtil;
+import com.dtstack.flinkx.util.MathUtil;
+import com.dtstack.flinkx.util.PluginUtil;
+import com.dtstack.flinkx.util.PrintUtil;
+import com.dtstack.flinkx.util.PropertiesUtil;
+import com.dtstack.flinkx.util.StreamEnvConfigManagerUtil;
+import com.dtstack.flinkx.util.TableUtil;
+import com.google.common.base.Preconditions;
+import org.apache.commons.io.Charsets;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.lang.reflect.Field;
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.net.URL;
 import java.net.URLDecoder;
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
-import java.util.*;
+import java.util.concurrent.TimeUnit;
+
+import static com.dtstack.flinkx.constants.ConfigConstant.STRATEGY_DELAYINTERVAL;
+import static com.dtstack.flinkx.constants.ConfigConstant.STRATEGY_FAILUREINTERVAL;
+import static com.dtstack.flinkx.constants.ConfigConstant.STRATEGY_FAILURERATE;
+import static com.dtstack.flinkx.constants.ConfigConstant.STRATEGY_RESTARTATTEMPTS;
+import static com.dtstack.flinkx.constants.ConfigConstant.STRATEGY_STRATEGY;
+import static org.apache.flink.table.api.config.TableConfigOptions.TABLE_DYNAMIC_TABLE_OPTIONS_ENABLED;
 
 /**
  * The main class entry
  *
- * Company: www.dtstack.com
+ * <p>Company: www.dtstack.com
+ *
  * @author huyifan.zju@163.com
  */
 public class Main {
 
     public static Logger LOG = LoggerFactory.getLogger(Main.class);
 
-    private static ObjectMapper objectMapper = new ObjectMapper();
-
     public static void main(String[] args) throws Exception {
-        com.dtstack.flinkx.options.Options options = new OptionParser(args).getOptions();
-        String job = options.getJob();
-        String jobIdString = options.getJobid();
-        String monitor = options.getMonitor();
-        String pluginRoot = options.getPluginRoot();
-        String savepointPath = options.getS();
-        Properties confProperties = parseConf(options.getConfProp());
+        LOG.info("------------program params-------------------------");
+        Arrays.stream(args).forEach(arg -> LOG.info("{}", arg));
+        LOG.info("-------------------------------------------");
 
-        // 解析jobPath指定的任务配置文件
-        DataTransferConfig config = DataTransferConfig.parse(job);
+        Options options = new OptionParser(args).getOptions();
+        String job = URLDecoder.decode(options.getJob(), Charsets.UTF_8.name());
+        Properties confProperties = PropertiesUtil.parseConf(options.getConfProp());
 
-        if(StringUtils.isNotEmpty(monitor)) {
-            config.setMonitorUrls(monitor);
+        StreamExecutionEnvironment env = createStreamExecutionEnvironment(options);
+        StreamTableEnvironment tableEnv = createStreamTableEnvironment(env);
+        configStreamExecutionEnvironment(tableEnv, confProperties, options.getJobName());
+
+        switch (EJobType.getByName(options.getJobType())) {
+            case SQL:
+                exeSqlJob(env, tableEnv, job, options, confProperties);
+                break;
+
+            case SYNC:
+                exeSyncJob(env, tableEnv, job, options, confProperties);
+                break;
+            default:
+                throw new RuntimeException("just support sql or sync jobType !!!");
         }
 
-        if(StringUtils.isNotEmpty(pluginRoot)) {
-            config.setPluginRoot(pluginRoot);
-        }
-
-        StreamExecutionEnvironment env = (StringUtils.isNotBlank(monitor)) ?
-                StreamExecutionEnvironment.getExecutionEnvironment() :
-                new MyLocalStreamEnvironment();
-
-        env = openCheckpointConf(env, confProperties);
-
-        env.setParallelism(config.getJob().getSetting().getSpeed().getChannel());
-        env.setRestartStrategy(RestartStrategies.noRestart());
-        DataReader dataReader = DataReaderFactory.getDataReader(config, env);
-        DataStream<Row> dataStream = dataReader.readData();
-
-        dataStream = new DataStream<>(dataStream.getExecutionEnvironment(),
-                new PartitionTransformation<>(dataStream.getTransformation(),
-                        new DTRebalancePartitioner<>()));
-
-        DataWriter dataWriter = DataWriterFactory.getDataWriter(config);
-        dataWriter.writeData(dataStream);
-
-        if(env instanceof MyLocalStreamEnvironment) {
-            if(StringUtils.isNotEmpty(savepointPath)){
-                ((MyLocalStreamEnvironment) env).setSettings(SavepointRestoreSettings.forPath(savepointPath));
-            }
-        }
-
-        Set<URL> classPathSet = ClassLoaderManager.getClassPath();
-        addEnvClassPath(env, classPathSet);
-
-        JobExecutionResult result = env.execute(jobIdString);
-        if(env instanceof MyLocalStreamEnvironment){
-            ResultPrintUtil.printResult(result);
-        }
+        LOG.info("program {} execution success", options.getJobName());
     }
 
-    private static void addEnvClassPath(StreamExecutionEnvironment env, Set<URL> classPathSet) throws Exception{
-        if(env instanceof MyLocalStreamEnvironment){
-            ((MyLocalStreamEnvironment) env).setClasspaths(new ArrayList<>(classPathSet));
-        } else if(env instanceof StreamContextEnvironment){
-            Field field = env.getClass().getDeclaredField("ctx");
-            field.setAccessible(true);
-            ContextEnvironment contextEnvironment= (ContextEnvironment) field.get(env);
-
-            List<String> originUrlList = new ArrayList<>();
-            for (URL url : contextEnvironment.getClasspaths()) {
-                originUrlList.add(url.toString());
-            }
-
-            for (URL url : classPathSet) {
-                if (!originUrlList.contains(url.toString())){
-                    contextEnvironment.getClasspaths().add(url);
+    /**
+     * 执行sql 类型任务
+     *
+     * @param env
+     * @param tableEnv
+     * @param job
+     * @param options
+     * @param confProperties
+     * @throws Exception
+     */
+    private static void exeSqlJob(
+            StreamExecutionEnvironment env,
+            StreamTableEnvironment tableEnv,
+            String job,
+            Options options,
+            Properties confProperties)
+            throws Exception {
+        configStreamExecutionEnvironment(env, options, null, confProperties);
+        List<URL> jarUrlList = ExecuteProcessHelper.getExternalJarUrls(options.getAddjar());
+        StatementSet statementSet = SqlParser.parseSql(job, jarUrlList, tableEnv);
+        TableResult execute = statementSet.execute();
+        if (env instanceof MyLocalStreamEnvironment) {
+            execute.getJobClient().ifPresent(v -> {
+                try {
+                    PrintUtil.printResult(v.getAccumulators().get());
+                } catch (Exception e) {
+                    LOG.error("error to execute sql job, e = {}", ExceptionUtil.getErrorMessage(e));
                 }
-            }
+            });
         }
     }
 
-    private static Properties parseConf(String confStr) throws Exception{
-        if(StringUtils.isEmpty(confStr)){
-            return new Properties();
+    /**
+     * 执行 数据同步类型任务
+     *
+     * @param env
+     * @param tableEnv
+     * @param job
+     * @param options
+     * @param confProperties
+     * @throws Exception
+     */
+    private static void exeSyncJob(
+            StreamExecutionEnvironment env,
+            StreamTableEnvironment tableEnv,
+            String job,
+            Options options,
+            Properties confProperties)
+            throws Exception {
+        SyncConf config = parseFlinkxConf(job, options);
+        buildRestartStrategy(confProperties, config);
+        configStreamExecutionEnvironment(env, options, config, confProperties);
+
+        SourceFactory sourceFactory = DataSyncFactoryUtil.discoverSource(config, env);
+        DataStream<RowData> dataStreamSource = sourceFactory.createSource();
+
+        SpeedConf speed = config.getSpeed();
+        if (speed.getReaderChannel() > 0) {
+            dataStreamSource =
+                    ((DataStreamSource<RowData>) dataStreamSource)
+                            .setParallelism(speed.getReaderChannel());
         }
 
-        confStr = URLDecoder.decode(confStr, Charsets.UTF_8.toString());
-        return objectMapper.readValue(confStr, Properties.class);
+        DataStream<RowData> dataStream;
+        boolean transformer =
+                config.getTransformer() != null
+                        && StringUtils.isNotBlank(config.getTransformer().getTransformSql());
+
+        if (transformer) {
+            dataStream = syncStreamToTable(tableEnv, config, dataStreamSource);
+        } else {
+            dataStream = dataStreamSource;
+        }
+
+        if (speed.isRebalance()) {
+            dataStream = dataStream.rebalance();
+        }
+
+        SinkFactory sinkFactory = DataSyncFactoryUtil.discoverSink(config);
+        DataStreamSink<RowData> dataStreamSink = sinkFactory.createSink(dataStream);
+        if (speed.getWriterChannel() > 0) {
+            dataStreamSink.setParallelism(speed.getWriterChannel());
+        }
+
+        JobExecutionResult result = env.execute(options.getJobName());
+        if (env instanceof MyLocalStreamEnvironment) {
+            PrintUtil.printResult(result.getAllAccumulatorResults());
+        }
     }
 
-    private static StreamExecutionEnvironment openCheckpointConf(StreamExecutionEnvironment env, Properties properties){
-        if(properties!=null){
-            String interval = properties.getProperty(ConfigConstrant.FLINK_CHECKPOINT_INTERVAL_KEY);
-            if(StringUtils.isNotBlank(interval)){
-                env.enableCheckpointing(Long.valueOf(interval.trim()));
-                LOG.info("Open checkpoint with interval:" + interval);
-            }
-            String checkpointTimeoutStr = properties.getProperty(ConfigConstrant.FLINK_CHECKPOINT_TIMEOUT_KEY);
-            if(checkpointTimeoutStr != null){
-                long checkpointTimeout = Long.valueOf(checkpointTimeoutStr.trim());
-                //checkpoints have to complete within one min,or are discard
-                env.getCheckpointConfig().setCheckpointTimeout(checkpointTimeout);
+    /**
+     * 将数据同步Stream 注册成table
+     *
+     * @param tableEnv
+     * @param config
+     * @param sourceDataStream
+     * @return
+     */
+    private static DataStream<RowData> syncStreamToTable(
+            StreamTableEnvironment tableEnv,
+            SyncConf config,
+            DataStream<RowData> sourceDataStream) {
+        String fieldNames = String.join(",", config.getReader().getFieldNameList());
+        List<Expression> expressionList = ExpressionParser.parseExpressionList(fieldNames);
+        Table sourceTable =
+                tableEnv.fromDataStream(
+                        sourceDataStream, expressionList.toArray(new Expression[0]));
+        tableEnv.createTemporaryView(config.getReader().getTable().getTableName(), sourceTable);
 
-                LOG.info("Set checkpoint timeout:" + checkpointTimeout);
+        String transformSql = config.getJob().getTransformer().getTransformSql();
+        Table adaptTable = tableEnv.sqlQuery(transformSql);
+
+        DataType[] tableDataTypes = adaptTable.getSchema().getFieldDataTypes();
+        String[] tableFieldNames = adaptTable.getSchema().getFieldNames();
+        TypeInformation<RowData> typeInformation =
+                TableUtil.getTypeInformation(tableDataTypes, tableFieldNames);
+        DataStream<RowData> dataStream =
+                tableEnv.toRetractStream(adaptTable, typeInformation).map(f -> f.f1);
+        tableEnv.createTemporaryView(config.getWriter().getTable().getTableName(), dataStream);
+
+        return dataStream;
+    }
+
+    /**
+     * 将配置文件中的任务重启策略设置到Properties中
+     *
+     * @param confProperties
+     * @param config
+     */
+    private static void buildRestartStrategy(Properties confProperties, SyncConf config) {
+        RestartConf restart = config.getRestart();
+        confProperties.setProperty(STRATEGY_STRATEGY, restart.getStrategy());
+        confProperties.setProperty(
+                STRATEGY_RESTARTATTEMPTS, String.valueOf(restart.getRestartAttempts()));
+        confProperties.setProperty(
+                STRATEGY_DELAYINTERVAL, String.valueOf(restart.getDelayInterval()));
+        confProperties.setProperty(STRATEGY_FAILURERATE, String.valueOf(restart.getFailureRate()));
+        confProperties.setProperty(
+                STRATEGY_FAILUREINTERVAL, String.valueOf(restart.getFailureInterval()));
+    }
+
+    /**
+     * 解析并设置job
+     *
+     * @param job
+     * @param options
+     * @return
+     */
+    public static SyncConf parseFlinkxConf(String job, Options options) {
+        SyncConf config;
+        try {
+            config = SyncConf.parseJob(job);
+
+            if (StringUtils.isNotEmpty(options.getPluginRoot())) {
+                config.setPluginRoot(options.getPluginRoot());
             }
-            env.getCheckpointConfig().setCheckpointingMode(CheckpointingMode.EXACTLY_ONCE);
-            env.getCheckpointConfig().enableExternalizedCheckpoints(
-                    CheckpointConfig.ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION);
+
+            if (StringUtils.isNotEmpty(options.getRemotePluginPath())) {
+                config.setRemotePluginPath(options.getRemotePluginPath());
+            }
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+        return config;
+    }
+
+    /**
+     * 创建StreamExecutionEnvironment
+     *
+     * @param options
+     * @return
+     */
+    private static StreamExecutionEnvironment createStreamExecutionEnvironment(Options options) {
+        Configuration flinkConf = new Configuration();
+        if (StringUtils.isNotEmpty(options.getFlinkconf())) {
+            flinkConf = GlobalConfiguration.loadConfiguration(options.getFlinkconf());
+        }
+        StreamExecutionEnvironment env;
+        if (StringUtils.equalsIgnoreCase(ClusterMode.local.name(), options.getMode())) {
+            env = new MyLocalStreamEnvironment(flinkConf);
+        } else {
+            env = StreamExecutionEnvironment.getExecutionEnvironment();
         }
         return env;
+    }
+
+    /**
+     * 创建StreamTableEnvironment
+     *
+     * @param env StreamExecutionEnvironment
+     * @return
+     */
+    private static StreamTableEnvironment createStreamTableEnvironment(
+            StreamExecutionEnvironment env) {
+        StreamTableEnvironment tEnv = StreamTableEnvironment.create(env);
+        Configuration configuration = tEnv.getConfig().getConfiguration();
+        // Iceberg need this config setting up true.
+        configuration.setBoolean(TABLE_DYNAMIC_TABLE_OPTIONS_ENABLED.key(), true);
+        return tEnv;
+    }
+
+    /**
+     * 配置StreamExecutionEnvironment
+     *
+     * @param env StreamExecutionEnvironment
+     * @param options options
+     * @param config FlinkxConf
+     * @param properties confProperties
+     */
+    private static void configStreamExecutionEnvironment(
+            StreamExecutionEnvironment env, Options options, SyncConf config, Properties properties)
+            throws NoSuchMethodException, IllegalAccessException, InvocationTargetException,
+                    IOException {
+        configRestartStrategy(env, properties);
+        configCheckpoint(env, properties);
+        configEnvironment(env, properties);
+        if (env instanceof MyLocalStreamEnvironment) {
+            if (StringUtils.isNotEmpty(options.getS())) {
+                ((MyLocalStreamEnvironment) env)
+                        .setSettings(SavepointRestoreSettings.forPath(options.getS()));
+            }
+        }
+
+        if (config != null) {
+            PluginUtil.registerPluginUrlToCachedFile(config, env);
+            env.setParallelism(config.getSpeed().getChannel());
+        } else {
+            Preconditions.checkArgument(
+                    ExecuteProcessHelper.checkRemoteSqlPluginPath(
+                            options.getRemotePluginPath(),
+                            options.getMode(),
+                            options.getPluginLoadMode()),
+                    "Non-local mode or shipfile deployment mode, remoteSqlPluginPath is required");
+            FactoryUtil.setLocalPluginPath(options.getPluginRoot());
+            FactoryUtil.setRemotePluginPath(options.getRemotePluginPath());
+            FactoryUtil.setPluginLoadMode(options.getPluginLoadMode());
+            FactoryUtil.setEnv(env);
+            FactoryUtil.setConnectorLoadMode(options.getConnectorLoadMode());
+        }
+    }
+
+    /**
+     * 配置StreamTableEnvironment
+     *
+     * @param tableEnv
+     * @param properties
+     * @param jobName
+     */
+    private static void configStreamExecutionEnvironment(
+            StreamTableEnvironment tableEnv, Properties properties, String jobName) {
+        StreamEnvConfigManagerUtil.streamTableEnvironmentStateTTLConfig(tableEnv, properties);
+        StreamEnvConfigManagerUtil.streamTableEnvironmentEarlyTriggerConfig(tableEnv, properties);
+        StreamEnvConfigManagerUtil.streamTableEnvironmentName(tableEnv, jobName);
+    }
+
+    /**
+     * flink任务设置重试策略
+     *
+     * @param env
+     * @param properties
+     */
+    private static void configRestartStrategy(
+            StreamExecutionEnvironment env, Properties properties) {
+        if (ConfigConstant.STRATEGY_FIXED_DELAY.equalsIgnoreCase(
+                properties.getProperty(STRATEGY_STRATEGY))) {
+            env.setRestartStrategy(
+                    RestartStrategies.fixedDelayRestart(
+                            MathUtil.getIntegerVal(
+                                    properties.getProperty(STRATEGY_RESTARTATTEMPTS)),
+                            Time.of(
+                                    MathUtil.getLongVal(
+                                            properties.getProperty(STRATEGY_DELAYINTERVAL)),
+                                    TimeUnit.SECONDS)));
+        } else if (ConfigConstant.STRATEGY_FAILURE_RATE.equalsIgnoreCase(
+                        properties.getProperty(STRATEGY_STRATEGY))
+                || StreamEnvConfigManagerUtil.isRestore(properties).get()) {
+            env.setRestartStrategy(
+                    RestartStrategies.failureRateRestart(
+                            MathUtil.getIntegerVal(
+                                    properties.getProperty(STRATEGY_FAILURERATE),
+                                    ConfigConstant.FAILUEE_RATE),
+                            Time.of(
+                                    MathUtil.getLongVal(
+                                            properties.getProperty(STRATEGY_FAILUREINTERVAL),
+                                            StreamEnvConfigManagerUtil.getFailureInterval(
+                                                            properties)
+                                                    .get()),
+                                    TimeUnit.SECONDS),
+                            Time.of(
+                                    MathUtil.getLongVal(
+                                            properties.getProperty(STRATEGY_DELAYINTERVAL),
+                                            StreamEnvConfigManagerUtil.getDelayInterval(properties)
+                                                    .get()),
+                                    TimeUnit.SECONDS)));
+        } else {
+            env.setRestartStrategy(RestartStrategies.noRestart());
+        }
+    }
+
+    /**
+     * 配置最大并行度等相关参数
+     *
+     * @param streamEnv
+     * @param confProperties
+     * @throws NoSuchMethodException
+     * @throws InvocationTargetException
+     * @throws IllegalAccessException
+     */
+    private static void configEnvironment(
+            StreamExecutionEnvironment streamEnv, Properties confProperties)
+            throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
+        confProperties = PropertiesUtil.propertiesTrim(confProperties);
+        streamEnv.getConfig().disableClosureCleaner();
+
+        Configuration globalJobParameters = new Configuration();
+        // Configuration unsupported set properties key-value
+        Method method =
+                Configuration.class.getDeclaredMethod(
+                        "setValueInternal", String.class, Object.class);
+        method.setAccessible(true);
+        for (Map.Entry<Object, Object> prop : confProperties.entrySet()) {
+            method.invoke(globalJobParameters, prop.getKey(), prop.getValue());
+        }
+
+        ExecutionConfig exeConfig = streamEnv.getConfig();
+        if (exeConfig.getGlobalJobParameters() == null) {
+            exeConfig.setGlobalJobParameters(globalJobParameters);
+        } else if (exeConfig.getGlobalJobParameters() != null) {
+            exeConfig.setGlobalJobParameters(globalJobParameters);
+        }
+
+        StreamEnvConfigManagerUtil.disableChainOperator(streamEnv, globalJobParameters);
+
+        StreamEnvConfigManagerUtil.getEnvParallelism(confProperties)
+                .ifPresent(streamEnv::setParallelism);
+        StreamEnvConfigManagerUtil.getMaxEnvParallelism(confProperties)
+                .ifPresent(streamEnv::setMaxParallelism);
+        StreamEnvConfigManagerUtil.getBufferTimeoutMillis(confProperties)
+                .ifPresent(streamEnv::setBufferTimeout);
+        StreamEnvConfigManagerUtil.getStreamTimeCharacteristic(confProperties)
+                .ifPresent(streamEnv::setStreamTimeCharacteristic);
+        StreamEnvConfigManagerUtil.getAutoWatermarkInterval(confProperties)
+                .ifPresent(
+                        op -> {
+                            if (streamEnv
+                                    .getStreamTimeCharacteristic()
+                                    .equals(TimeCharacteristic.EventTime)) {
+                                streamEnv.getConfig().setAutoWatermarkInterval(op);
+                            }
+                        });
+    }
+
+    /**
+     * flink任务设置checkpoint
+     *
+     * @param env
+     * @param properties
+     * @return
+     */
+    private static void configCheckpoint(StreamExecutionEnvironment env, Properties properties)
+            throws IOException {
+        Optional<Boolean> checkpointEnabled =
+                StreamEnvConfigManagerUtil.isCheckpointEnabled(properties);
+        if (checkpointEnabled.get()) {
+            StreamEnvConfigManagerUtil.getTolerableCheckpointFailureNumber(properties)
+                    .ifPresent(env.getCheckpointConfig()::setTolerableCheckpointFailureNumber);
+            StreamEnvConfigManagerUtil.getCheckpointInterval(properties)
+                    .ifPresent(env::enableCheckpointing);
+            StreamEnvConfigManagerUtil.getCheckpointMode(properties)
+                    .ifPresent(env.getCheckpointConfig()::setCheckpointingMode);
+            StreamEnvConfigManagerUtil.getCheckpointTimeout(properties)
+                    .ifPresent(env.getCheckpointConfig()::setCheckpointTimeout);
+            StreamEnvConfigManagerUtil.getMaxConcurrentCheckpoints(properties)
+                    .ifPresent(env.getCheckpointConfig()::setMaxConcurrentCheckpoints);
+            StreamEnvConfigManagerUtil.getCheckpointCleanup(properties)
+                    .ifPresent(env.getCheckpointConfig()::enableExternalizedCheckpoints);
+            StreamEnvConfigManagerUtil.enableUnalignedCheckpoints(properties)
+                    .ifPresent(
+                            event -> env.getCheckpointConfig().enableUnalignedCheckpoints(event));
+            StreamEnvConfigManagerUtil.getStateBackend(properties).ifPresent(env::setStateBackend);
+        }
     }
 }

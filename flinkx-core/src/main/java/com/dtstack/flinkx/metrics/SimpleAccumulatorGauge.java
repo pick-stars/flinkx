@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -31,7 +31,7 @@ import java.io.Serializable;
  */
 public class SimpleAccumulatorGauge<T extends Serializable> implements Gauge<T> {
 
-    private Accumulator<T, T> accumulator;
+    private final Accumulator<T, T> accumulator;
 
     public SimpleAccumulatorGauge(Accumulator<T, T> accumulator) {
         this.accumulator = accumulator;

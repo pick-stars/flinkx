@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -17,6 +17,9 @@
  */
 
 package com.dtstack.flinkx.constants;
+
+import java.util.Arrays;
+import java.util.List;
 
 /**
  * Statistics Metrics
@@ -73,5 +76,16 @@ public class Metrics {
     public static final String LAST_WRITE_NUM__PREFIX = "last_write_num";
 
     public static final String SUFFIX_RATE = "PerSecond";
+
+    public static final List<String> METRIC_SINK_LIST = Arrays.asList(
+            NUM_ERRORS,
+            NUM_NULL_ERRORS,
+            NUM_DUPLICATE_ERRORS,
+            NUM_CONVERSION_ERRORS,
+            NUM_OTHER_ERRORS,
+            NUM_WRITES,
+            WRITE_BYTES,
+            NUM_READS,
+            WRITE_DURATION);
 
 }

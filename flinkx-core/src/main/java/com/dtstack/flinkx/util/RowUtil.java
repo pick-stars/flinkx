@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,12 +18,15 @@
 
 package com.dtstack.flinkx.util;
 
+import org.apache.flink.table.data.GenericRowData;
+import org.apache.flink.table.data.RowData;
+import org.apache.flink.util.Preconditions;
+import org.apache.flink.util.StringUtils;
+
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import org.apache.flink.types.Row;
-import org.apache.flink.util.Preconditions;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -35,10 +38,11 @@ import java.util.Map;
 public class RowUtil {
     static Gson gson = new GsonBuilder().disableHtmlEscaping().create();
 
-    public static String rowToJson(Row row, String[] colName) {
+    public static String rowToJson(RowData rowData, String[] colName) {
         Preconditions.checkNotNull(colName);
-        Map<String,Object> map = new HashMap<>();
+        Map<String,Object> map = new LinkedHashMap<>(colName.length);
 
+        GenericRowData row = (GenericRowData)rowData;
         for(int i = 0; i < colName.length; ++i) {
             String key = colName[i];
             Object value = row.getField(i);
@@ -46,5 +50,26 @@ public class RowUtil {
         }
 
         return gson.toJson(map);
+    }
+
+    /**
+     * row转字符串
+     * @param rowData rowData
+     * @param writeDelimiter 分隔符
+     * @return 字符串
+     */
+    public static String rowToStringWithDelimiter(RowData rowData, String writeDelimiter) {
+        if(rowData == null){
+            return "";
+        }else{
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < rowData.getArity(); i++) {
+                if (i > 0) {
+                    sb.append(writeDelimiter);
+                }
+                sb.append(StringUtils.arrayAwareToString(((GenericRowData)rowData).getField(i)));
+            }
+            return sb.toString();
+        }
     }
 }

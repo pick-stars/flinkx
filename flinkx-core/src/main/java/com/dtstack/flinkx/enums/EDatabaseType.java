@@ -18,6 +18,8 @@
 
 package com.dtstack.flinkx.enums;
 
+import org.apache.commons.net.ftp.FTP;
+
 /**
  * Database type
  *
@@ -26,18 +28,32 @@ package com.dtstack.flinkx.enums;
  */
 public enum EDatabaseType {
 
+    /**
+     * database type
+     */
     MySQL,
     SQLServer,
     Oracle,
     PostgreSQL,
+    Greenplum,
     DB2,
     MongoDB,
     Redis,
     ES,
+
+    /**
+     * contains ftp and sftp
+     */
     FTP,
     Hbase,
     ODPS,
     STREAM,
     Carbondata,
-    GBase
+    GBase,
+    clickhouse,
+    polarDB,
+    Phoenix,
+    dm,
+    SapHana,
+    KingBase
 }
