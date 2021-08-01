@@ -33,7 +33,7 @@ sh build/build.sh
 ```
 
 ## 运行任务
-**NOTE:项目中的flinkx-examples模块下提供了大量 [数据同步案例](flinkx-examples/json) 和 [SQL案例](flinkx-examples/sql)**
+**NOTE:项目中的flinkx-examples模块下提供了大量 [数据同步案例](https://github.com/DTStack/flinkx/tree/1.12_beta/flinkx-examples/json) 和 [SQL案例](https://github.com/DTStack/flinkx/tree/1.12_beta/flinkx-examples/sql)**
 
 #### 数据同步任务
 
@@ -112,7 +112,7 @@ sh build/build.sh
 ```
 #### flinksql任务
 
-***NOTE：flinkX和flinkSql connector[共用](docs/conectorShare.md)***<br /><br />
+***NOTE：flinkX和flinkSql connector[共用](conectorShare.md)***<br /><br />
 或者准备要运行的flinksql任务，这里以stream插件为例(**`flinkx-examples`文件夹下有大量案例**)：
 
 ```sql
@@ -347,7 +347,7 @@ bin/flinkx \
 $FLINK_HOME/bin/kubernetes-session.sh -Dkubernetes.cluster-id=flink-session-test -Dclassloader.resolve-order=parent-first -Dkubernetes.container.image=${image_name}
 ```
 注意：需要提前构建flinkx镜像
-[flinkx镜像构建说明](flinkx-docker/docker/README.md)
+[flinkx镜像构建说明](https://github.com/DTStack/flinkx/blob/1.12_beta/flinkx-docker/docker/README.md)
 
 ### Kubernetes Application模式运行任务
 
@@ -368,7 +368,7 @@ bin/flinkx \
     -confProp "{\"kubernetes.config.file\":\"${kubernetes_config_path}\",\"kubernetes.container.image\":\"${image_name}\",\"kubernetes.namespace\":\"${namespace}\"}"
 ```
 注意：需要提前构建flinkx镜像
-[flinkx镜像构建说明](flinkx-docker/docker/README.md)
+[flinkx镜像构建说明](https://github.com/DTStack/flinkx/blob/1.12_beta/flinkx-docker/docker/README.md)
 
 ## 参数说明
 
@@ -378,7 +378,7 @@ bin/flinkx \
 | **jobType**        | 任务类型                 | 1.**sync**:数据同步任务<br />    2.**sql**:flinksql任务                                                                                                                                                                                                                                      | 是    | 无                       |
 | **connectorLoadMode**  | 插件加载方式         | 1.**classloader**:类加载器的方式加载插件,在flinkx-clients模块中Launcher类中可本地、on yarn、on k8s运行<br />    2.**spi**:spi的方式,目前只是在flinkx-local-test模块下的LocalTest类中本地开发调试用                                                                                                                                                                                                                                      | 否    | classloader                       |
 | **job**            | 同步、flinksql任务描述文件的存放路径；该描述文件中使用json、sql存放任务信息                  | 无                                                                                                                                                                                                                                           | 是    | 无                       |
-| **jobid**          | 任务名称                                                   | 无                                                                                                                                                                                                                                           | 否    | Flink Job               |
+| **jobName**          | 任务名称                                                   | 无                                                                                                                                                                                                                                           | 否    | Flink Job               |
 | **pluginRoot**     | 插件根目录地址，也就是打包后产生的pluginRoot目录。                         | 无                                                                                                                                                                                                                                           | 否    | $FLINKX_HOME/flinkxplugins    |
 | **flinkconf**      | flink配置文件所在的目录（单机模式下不需要）                               | $FLINK_HOME/conf                                                                                                                                                                                                                            | 否    | $FLINK_HOME/conf        |
 | **flinkLibJar**    | flink lib所在的目录（单机模式下不需要），如/opt/dtstack/flink-1.10.1/lib | $FLINK_HOME/lib                                                                                                                                                                                                                             | 否    | $FLINK_HOME/lib         |
